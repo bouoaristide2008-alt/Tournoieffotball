@@ -1,15 +1,21 @@
 import os
 import telebot
 from telebot import types
+from flask import Flask, request
 import json
 
+# ====== CONFIG ======
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8377020931:AAHGv8FI4i4xJjNUuUEN3Gp2Tjwn9FG7a2c")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6357925694"))
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002884958871"))
 GROUP_LINK = "https://t.me/htclicpourrejointicitoites"
 
-bot = telebot.TeleBot(BOT_TOKEN)
+WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
 
+bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
+
+# ====== GESTION DATA ======
 DATA_FILE = "data.json"
 
 def load_data():
@@ -24,6 +30,7 @@ def save_data(data):
 
 data = load_data()
 
+# ====== LANGUES ======
 LANGS = {
     "fr": {"welcome":"👋 Bienvenue sur le Bot eFootball !","menu":"📍 Menu principal","inscription":"📝 Inscription","infos":"ℹ️ Mes infos","tournoi":"🏆 Tournoi","classement":"📊 Classement","support":"📩 Support","lang":"🌍 Changer de langue","inscription_done":"🎉 Inscription validée !\n👤 Nom : {nom}\n🆔 ID eFootball : {id}\n🎮 Pseudo : {pseudo}\n✅ Ton inscription a été envoyée au canal officiel.\n➡️ Rejoins le groupe : "+GROUP_LINK},
     "en": {"welcome":"👋 Welcome to the eFootball Bot!","menu":"📍 Main menu","inscription":"📝 Register","infos":"ℹ️ My info","tournoi":"🏆 Tournament","classement":"📊 Ranking","support":"📩 Support","lang":"🌍 Change language","inscription_done":"🎉 Registration completed!\n👤 Name: {nom}\n🆔 eFootball ID: {id}\n🎮 Username: {pseudo}\n✅ Your registration has been sent to the official channel.\n➡️ Join the group: "+GROUP_LINK},
@@ -33,6 +40,7 @@ LANGS = {
 def get_lang(user_id):
     return data.get(str(user_id), {}).get("lang", "fr")
 
+# ====== HANDLERS ======
 @bot.message_handler(commands=["start"])
 def start(message):
     user_id = str(message.chat.id)
@@ -49,7 +57,6 @@ def start(message):
 
 @bot.message_handler(func=lambda m: m.text in [LANGS[l]["inscription"] for l in LANGS])
 def inscription(message):
-    lang = get_lang(message.chat.id)
     msg = bot.send_message(message.chat.id, "👤 Ton nom ?")
     bot.register_next_step_handler(msg, ask_name)
 
@@ -93,5 +100,25 @@ def set_lang(call):
     bot.answer_callback_query(call.id, "✅ Langue changée !")
     start(call.message)
 
+# ====== FLASK ROUTES ======
+@app.route("/" + BOT_TOKEN, methods=["POST"])
+def webhook():
+    json_str = request.get_data().decode("UTF-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "OK", 200
+
+@app.route("/")
+def index():
+    return "Bot is running with Gunicorn & Flask 🚀", 200
+
+# ====== SET WEBHOOK ======
+@app.before_first_request
+def set_webhook():
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL)
+
 if __name__ == "__main__":
+    # En local = polling
+    bot.remove_webhook()
     bot.polling(none_stop=True)
