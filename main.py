@@ -1,124 +1,187 @@
 import os
-import telebot
-from telebot import types
-from flask import Flask, request
-import json
+import pandas as pd
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, filters,
+    CallbackQueryHandler, ContextTypes, ConversationHandler
+)
 
-# ====== CONFIG ======
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8377020931:AAHGv8FI4i4xJjNUuUEN3Gp2Tjwn9FG7a2c")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "6357925694"))
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002884958871"))
-GROUP_LINK = "https://t.me/htclicpourrejointicitoites"
+# ------------------------- CONFIG -------------------------
+NOM, EQUIPE, WHATSAPP = range(3)
+inscriptions = {}
 
-WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
+clubs_disponibles = [
+    "Real Madrid", "FC Barcelone", "Manchester City", "Manchester United",
+    "Liverpool", "Chelsea", "Arsenal", "Tottenham",
+    "Paris Saint-Germain", "Bayern Munich", "Borussia Dortmund", "RB Leipzig",
+    "Juventus", "AC Milan", "Inter Milan", "Napoli",
+    "AS Roma", "Atletico Madrid", "Sevilla FC", "Valencia",
+    "Ajax Amsterdam", "PSV Eindhoven", "Feyenoord", "Porto",
+    "Benfica", "Sporting CP", "Galatasaray", "Fenerbahçe",
+    "Besiktas", "Flamengo", "Palmeiras", "River Plate"
+]
 
-bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(__name__)
+# Variables d'environnement pour sécurité
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+ADMIN_ID = int(os.environ.get("ADMIN_ID"))
+CANAL_ID = int(os.environ.get("CANAL_ID"))
+LIEN_GROUPE = os.environ.get("LIEN_GROUPE")
 
-# ====== GESTION DATA ======
-DATA_FILE = "data.json"
+# ------------------------- MENU PRINCIPAL -------------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("📝 S'inscrire", callback_data="inscrire")],
+        [InlineKeyboardButton("🏆 Tournoi", callback_data="tournoi")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Bienvenue sur le Bot Tournoi eFootball ⚽", reply_markup=reply_markup)
 
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
 
-def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    if query.data == "inscrire":
+        if user_id in inscriptions:
+            await query.edit_message_text("❌ Tu es déjà inscrit au tournoi.")
+            return ConversationHandler.END
+        await query.edit_message_text("✍️ Entre ton nom pour le tournoi :")
+        return NOM
+    elif query.data == "tournoi":
+        await query.edit_message_text("🏆 Le tournoi commencera bientôt, reste connecté !")
+        return ConversationHandler.END
 
-data = load_data()
+# ------------------------- INSCRIPTION -------------------------
+async def recevoir_nom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["nom"] = update.message.text
+    keyboard = []
+    equipes_prises = [data["equipe"] for data in inscriptions.values()]
+    for i, club in enumerate(clubs_disponibles, start=1):
+        if club not in equipes_prises:
+            keyboard.append([InlineKeyboardButton(f"{i}. {club}", callback_data=f"club_{i}")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("⚽ Sélectionne ton équipe :", reply_markup=reply_markup)
+    return EQUIPE
 
-# ====== LANGUES ======
-LANGS = {
-    "fr": {"welcome":"👋 Bienvenue sur le Bot eFootball !","menu":"📍 Menu principal","inscription":"📝 Inscription","infos":"ℹ️ Mes infos","tournoi":"🏆 Tournoi","classement":"📊 Classement","support":"📩 Support","lang":"🌍 Changer de langue","inscription_done":"🎉 Inscription validée !\n👤 Nom : {nom}\n🆔 ID eFootball : {id}\n🎮 Pseudo : {pseudo}\n✅ Ton inscription a été envoyée au canal officiel.\n➡️ Rejoins le groupe : "+GROUP_LINK},
-    "en": {"welcome":"👋 Welcome to the eFootball Bot!","menu":"📍 Main menu","inscription":"📝 Register","infos":"ℹ️ My info","tournoi":"🏆 Tournament","classement":"📊 Ranking","support":"📩 Support","lang":"🌍 Change language","inscription_done":"🎉 Registration completed!\n👤 Name: {nom}\n🆔 eFootball ID: {id}\n🎮 Username: {pseudo}\n✅ Your registration has been sent to the official channel.\n➡️ Join the group: "+GROUP_LINK},
-    "es": {"welcome":"👋 ¡Bienvenido al Bot de eFootball!","menu":"📍 Menú principal","inscription":"📝 Inscripción","infos":"ℹ️ Mi información","tournoi":"🏆 Torneo","classement":"📊 Clasificación","support":"📩 Soporte","lang":"🌍 Cambiar idioma","inscription_done":"🎉 ¡Inscripción completada!\n👤 Nombre: {nom}\n🆔 ID de eFootball: {id}\n🎮 Usuario: {pseudo}\n✅ Tu inscripción ha sido enviada al canal oficial.\n➡️ Únete al grupo: "+GROUP_LINK}
-}
+async def recevoir_equipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    choix = int(query.data.split("_")[1])
+    equipe = clubs_disponibles[choix - 1]
+    equipes_prises = [data["equipe"] for data in inscriptions.values()]
+    if equipe in equipes_prises:
+        await query.edit_message_text(f"❌ L'équipe {equipe} est déjà prise.\nRelance /start pour réessayer.")
+        return ConversationHandler.END
+    context.user_data["equipe"] = equipe
+    await query.edit_message_text("📱 Envoie maintenant ton numéro WhatsApp (+225XXXXXXXX) :")
+    return WHATSAPP
 
-def get_lang(user_id):
-    return data.get(str(user_id), {}).get("lang", "fr")
+async def recevoir_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    numero = update.message.text
+    context.user_data["whatsapp"] = numero
+    user_id = update.message.from_user.id
+    inscriptions[user_id] = context.user_data.copy()
 
-# ====== HANDLERS ======
-@bot.message_handler(commands=["start"])
-def start(message):
-    user_id = str(message.chat.id)
-    if user_id not in data:
-        data[user_id] = {"lang": "fr"}
-        save_data(data)
-    lang = get_lang(user_id)
-    txt = LANGS[lang]["welcome"]
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add(LANGS[lang]["inscription"], LANGS[lang]["infos"])
-    markup.add(LANGS[lang]["tournoi"], LANGS[lang]["classement"])
-    markup.add(LANGS[lang]["support"], LANGS[lang]["lang"])
-    bot.send_message(message.chat.id, txt, reply_markup=markup)
+    # Récap privé
+    recap = (f"✅ Inscription réussie !\n\n"
+             f"👤 Nom : {context.user_data['nom']}\n"
+             f"⚽ Équipe : {context.user_data['equipe']}\n"
+             f"📱 WhatsApp : {context.user_data['whatsapp']}\n\n"
+             f"👉 Clique ici pour rejoindre le groupe : {LIEN_GROUPE}")
+    await update.message.reply_text(recap)
 
-@bot.message_handler(func=lambda m: m.text in [LANGS[l]["inscription"] for l in LANGS])
-def inscription(message):
-    msg = bot.send_message(message.chat.id, "👤 Ton nom ?")
-    bot.register_next_step_handler(msg, ask_name)
+    # Nouveau joueur dans canal
+    recap_canal = (f"🆕 Nouveau joueur inscrit !\n\n"
+                   f"👤 Nom : {context.user_data['nom']}\n"
+                   f"⚽ Équipe : {context.user_data['equipe']}\n"
+                   f"📱 WhatsApp : {context.user_data['whatsapp']}")
+    await context.bot.send_message(chat_id=CANAL_ID, text=recap_canal)
 
-def ask_name(message):
-    user_id = str(message.chat.id)
-    data[user_id]["nom"] = message.text
-    msg = bot.send_message(message.chat.id, "🆔 Ton ID eFootball ?")
-    bot.register_next_step_handler(msg, ask_id)
+    # Liste complète
+    liste = "📋 Liste des participants :\n\n"
+    for i, data in enumerate(inscriptions.values(), start=1):
+        liste += f"{i}. 👤 {data['nom']} — ⚽ {data['equipe']}\n"
+    await context.bot.send_message(chat_id=CANAL_ID, text=liste)
+    return ConversationHandler.END
 
-def ask_id(message):
-    user_id = str(message.chat.id)
-    data[user_id]["id"] = message.text
-    msg = bot.send_message(message.chat.id, "🎮 Ton pseudo ?")
-    bot.register_next_step_handler(msg, ask_pseudo)
+# ------------------------- ADMIN -------------------------
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Accès refusé.")
+        return
+    keyboard = [
+        [InlineKeyboardButton("📋 Voir les inscrits", callback_data="admin_inscrits")],
+        [InlineKeyboardButton("⚽ Équipes restantes", callback_data="admin_equipes")],
+        [InlineKeyboardButton("❌ Supprimer un joueur", callback_data="admin_supprimer")],
+        [InlineKeyboardButton("📤 Exporter en Excel", callback_data="admin_export")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🔐 Menu Admin :", reply_markup=reply_markup)
 
-def ask_pseudo(message):
-    user_id = str(message.chat.id)
-    data[user_id]["pseudo"] = message.text
-    save_data(data)
-    lang = get_lang(message.chat.id)
-    txt = LANGS[lang]["inscription_done"].format(
-        nom=data[user_id]["nom"], id=data[user_id]["id"], pseudo=data[user_id]["pseudo"]
-    )
-    bot.send_message(message.chat.id, txt)
-    bot.send_message(CHANNEL_ID, f"📢 Nouvelle inscription :\n👤 {data[user_id]['nom']}\n🆔 {data[user_id]['id']}\n🎮 {data[user_id]['pseudo']}")
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text("⛔ Accès refusé.")
+        return
+    if query.data == "admin_inscrits":
+        if inscriptions:
+            msg = "📋 Liste des inscrits :\n\n"
+            for data in inscriptions.values():
+                msg += f"👤 {data['nom']} | ⚽ {data['equipe']} | 📱 {data['whatsapp']}\n"
+        else:
+            msg = "❌ Aucun joueur inscrit."
+        await query.edit_message_text(msg)
+    elif query.data == "admin_equipes":
+        equipes_prises = [data["equipe"] for data in inscriptions.values()]
+        libres = [club for club in clubs_disponibles if club not in equipes_prises]
+        msg = "⚽ Équipes disponibles :\n" + "\n".join(libres) if libres else "✅ Toutes les équipes sont prises."
+        await query.edit_message_text(msg)
+    elif query.data == "admin_supprimer":
+        await query.edit_message_text("❌ Utilise la commande : /supprimer <nom>")
+    elif query.data == "admin_export":
+        if not inscriptions:
+            await query.edit_message_text("❌ Aucune inscription à exporter.")
+            return
+        df = pd.DataFrame(inscriptions.values())
+        file_path = "inscriptions.xlsx"
+        df.to_excel(file_path, index=False)
+        await query.message.reply_document(InputFile(file_path), caption="📤 Export des inscrits en Excel")
 
-@bot.message_handler(func=lambda m: m.text in [LANGS[l]["lang"] for l in LANGS])
-def change_lang(message):
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🇫🇷 Français", callback_data="lang_fr"))
-    markup.add(types.InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"))
-    markup.add(types.InlineKeyboardButton("🇪🇸 Español", callback_data="lang_es"))
-    bot.send_message(message.chat.id, "Choisis ta langue :", reply_markup=markup)
+async def supprimer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Tu n'as pas accès.")
+        return
+    if len(context.args) == 0:
+        await update.message.reply_text("Usage : /supprimer <nom>")
+        return
+    nom = " ".join(context.args)
+    joueur_id = None
+    for uid, data in inscriptions.items():
+        if data["nom"].lower() == nom.lower():
+            joueur_id = uid
+            break
+    if joueur_id:
+        del inscriptions[joueur_id]
+        await update.message.reply_text(f"✅ Joueur {nom} supprimé.")
+    else:
+        await update.message.reply_text(f"❌ Aucun joueur trouvé avec le nom : {nom}")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("lang_"))
-def set_lang(call):
-    user_id = str(call.message.chat.id)
-    lang = call.data.split("_")[1]
-    data[user_id]["lang"] = lang
-    save_data(data)
-    bot.answer_callback_query(call.id, "✅ Langue changée !")
-    start(call.message)
+# ------------------------- APPLICATION -------------------------
+app = Application.builder().token(BOT_TOKEN).build()
 
-# ====== FLASK ROUTES ======
-@app.route("/" + BOT_TOKEN, methods=["POST"])
-def webhook():
-    json_str = request.get_data().decode("UTF-8")
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return "OK", 200
+conv_handler = ConversationHandler(
+    entry_points=[CommandHandler("start", start)],
+    states={
+        NOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, recevoir_nom)],
+        EQUIPE: [CallbackQueryHandler(recevoir_equipe, pattern="^club_")],
+        WHATSAPP: [MessageHandler(filters.TEXT & ~filters.COMMAND, recevoir_whatsapp)],
+    },
+    fallbacks=[],
+)
 
-@app.route("/")
-def index():
-    return "Bot is running with Gunicorn & Flask 🚀", 200
-
-# ====== SET WEBHOOK ======
-@app.before_first_request
-def set_webhook():
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL)
-
-if __name__ == "__main__":
-    # En local = polling
-    bot.remove_webhook()
-    bot.polling(none_stop=True)
+app.add_handler(conv_handler)
+app.add_handler(CallbackQueryHandler(menu_callback, pattern="^(inscrire|tournoi)$"))
+app.add_handler(CommandHandler("admin", admin))
+app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
+app.add_handler(CommandHandler("supprimer", supprimer))
