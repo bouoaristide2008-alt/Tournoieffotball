@@ -21,13 +21,13 @@ clubs_disponibles = [
     "Besiktas", "Flamengo", "Palmeiras", "River Plate"
 ]
 
-# Variables d'environnement pour sécurité
+# Variables d'environnement
 BOT_TOKEN = os.environ.get("8377020931:AAHGv8FI4i4xJjNUuUEN3Gp2Tjwn9FG7a2c")
 ADMIN_ID = int(os.environ.get("6357925694"))
 CANAL_ID = int(os.environ.get("CANAL_ID"))
-LIEN_GROUPE = os.environ.get("LIEN_GROUPE")
+LIEN_GROUPE = os.environ.get("")
 
-# ------------------------- MENU PRINCIPAL -------------------------
+# ------------------------- MENU -------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📝 S'inscrire", callback_data="inscrire")],
@@ -40,7 +40,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-
     if query.data == "inscrire":
         if user_id in inscriptions:
             await query.edit_message_text("❌ Tu es déjà inscrit au tournoi.")
@@ -168,6 +167,7 @@ async def supprimer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Aucun joueur trouvé avec le nom : {nom}")
 
 # ------------------------- APPLICATION -------------------------
+# Exposé pour Gunicorn
 app = Application.builder().token(BOT_TOKEN).build()
 
 conv_handler = ConversationHandler(
