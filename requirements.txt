@@ -1,2 +1,2 @@
-pyTelegramBotAPI==4.16.1
-gunicorn==20.1.0
+pyTelegramBotAPI
+gunicorn
