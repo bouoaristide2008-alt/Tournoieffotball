@@ -1,4 +1,4 @@
-pyTelegramBotAPI
-Flask
+python-telegram-bot==20.4
+pandas
 gunicorn
-requests
+openpyxl
