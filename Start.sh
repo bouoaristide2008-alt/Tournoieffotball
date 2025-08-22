@@ -1,2 +1,2 @@
 #!/bin/bash
-exec gunicorn bot:app --workers 1 --bind 0.0.0.0:$PORT
+exec gunicorn main:app --workers 1 --bind 0.0.0.0:$PORT
