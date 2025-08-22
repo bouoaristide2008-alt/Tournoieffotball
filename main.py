@@ -22,8 +22,8 @@ clubs_disponibles = [
 ]
 
 # Variables d'environnement pour sécurité
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_ID = int(os.environ.get("ADMIN_ID"))
+BOT_TOKEN = os.environ.get("8377020931:AAHGv8FI4i4xJjNUuUEN3Gp2Tjwn9FG7a2c")
+ADMIN_ID = int(os.environ.get("6357925694"))
 CANAL_ID = int(os.environ.get("CANAL_ID"))
 LIEN_GROUPE = os.environ.get("LIEN_GROUPE")
 
