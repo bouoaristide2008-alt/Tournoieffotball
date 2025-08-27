@@ -52,7 +52,7 @@ def menu_principal():
     markup.add(InlineKeyboardButton("📊 Voir mon statut", callback_data="statut"))
     markup.add(InlineKeyboardButton("📋 Participants", callback_data="participants"))
     markup.add(InlineKeyboardButton("❓ Comment fonctionne le bot", callback_data="help"))
-    markup.add(InlineKeyboardButton("📢 Canal officiel"https://t.me/ytabdNbZ0qJlZWU0"))
+    markup.add(InlineKeyboardButton("📢 rejoint le Canal officiel "))
     return markup
 
 # ====== START ======
@@ -142,7 +142,7 @@ def save_inscription(message, nom, equipe, ligue_name):
     msg_user = (f"✅ Inscription réussie !\n"
                 f"Nom : {nom}\nÉquipe : {equipe}\nWhatsApp : {whatsapp}\n"
                 f"Code : {code}\nLigue : {ligue_name}\n"
-                f"👉 Rejoins le canal officiel : https://t.me/clicpourrejointicitoites")
+                f"👉 Rejoins le canal officiel : https://t.me/ytabdNbZ0qJlZWU0")
     bot.send_message(message.chat.id, msg_user)
 
     # Envoyer message dans groupe et canal
