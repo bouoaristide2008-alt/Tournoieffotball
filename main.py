@@ -199,7 +199,11 @@ app.add_handler(CommandHandler("equipe", set_statut))
 app.add_handler(CommandHandler("ligue", tirer_matchs))
 app.add_handler(conv_handler)
 
-# --- Webhook pour Render ---
-PORT = int(os.environ.get("PORT", 8443))
-app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN,
-                webhook_url=f"https://TON_APP.onrender.com/{TOKEN}")     
+def run_bot():
+    bot.polling(none_stop=True)
+
+Thread(target=run_bot, daemon=True).start()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
