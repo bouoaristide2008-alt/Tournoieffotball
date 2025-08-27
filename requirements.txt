@@ -1,4 +1,2 @@
-python-telegram-bot==20.4
-pandas
-gunicorn
-openpyxl
+python-telegram-bot==20.3
+gunicorn==21.2.0
