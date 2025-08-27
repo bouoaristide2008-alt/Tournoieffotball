@@ -17,6 +17,7 @@ TEAMS = ["PSG","Real Madrid","Chelsea","Barça","Bayern","Man City","Man United"
          "Liverpool","Juventus","Milan AC","Inter","Arsenal","Atlético Madrid",
          "Dortmund","Napoli","Tottenham"]
 ADMIN_IDS = [6357925694]  # Ton ID Telegram
+GROUP_ID = "-1002365829730"  # Remplace par ton ID ou @username du groupe
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
@@ -47,6 +48,7 @@ def start(message):
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("📝 S'inscrire", callback_data="inscription"))
     keyboard.add(InlineKeyboardButton("📊 Voir mon statut", callback_data="statut"))
+    keyboard.add(InlineKeyboardButton("📋 Participants", callback_data="participants"))
     keyboard.add(InlineKeyboardButton("📢 Canal officiel", url="https://t.me/clicpourrejointicitoites"))
     bot.send_message(message.chat.id, "Bienvenue au tournoi eFootball !", reply_markup=keyboard)
 
@@ -66,10 +68,14 @@ def callback(call):
         bot.send_message(call.message.chat.id, "Quel est ton numéro WhatsApp (+225...) ?")
         bot.register_next_step_handler(call.message, lambda msg: save_inscription(msg, nom, equipe))
 
+    elif call.data == "participants":
+        send_participants(call.message.chat.id)
+
 # --- Inscription ---
 def get_nom(message):
     nom = message.text
     with db_lock:
+        # Vérifier équipes disponibles
         c.execute("SELECT equipe FROM joueurs WHERE ligue=(SELECT COALESCE(MAX(numero),1) FROM ligues)")
         used_teams = [row[0] for row in c.fetchall()]
     available_teams = [team for team in TEAMS if team not in used_teams]
@@ -86,9 +92,17 @@ def get_nom(message):
 
 def save_inscription(message, nom, equipe):
     whatsapp = message.text
-    code = str(random.randint(1000, 9999))
 
     with db_lock:
+        # Vérifier si l'utilisateur est déjà inscrit
+        c.execute("SELECT id FROM joueurs WHERE telegram_id=?", (message.from_user.id,))
+        if c.fetchone():
+            bot.send_message(message.chat.id, "❌ Tu es déjà inscrit !")
+            return
+
+        code = str(random.randint(1000, 9999))
+
+        # Déterminer la ligue
         c.execute("SELECT MAX(numero) FROM ligues")
         row = c.fetchone()
         if row[0] is None or c.execute("SELECT COUNT(*) FROM joueurs WHERE ligue=?", (row[0],)).fetchone()[0] >= 16:
@@ -98,10 +112,12 @@ def save_inscription(message, nom, equipe):
         else:
             ligue_num = row[0]
 
+        # Sauvegarder le joueur
         c.execute("INSERT INTO joueurs (telegram_id, nom, equipe, whatsapp, code, ligue) VALUES (?,?,?,?,?,?)",
                   (message.from_user.id, nom, equipe, whatsapp, code, ligue_num))
         conn.commit()
 
+    # Message de confirmation à l'utilisateur
     bot.send_message(message.chat.id, f"""✅ Inscription réussie !
 
 Nom : {nom}
@@ -111,6 +127,9 @@ Code participation : {code}
 
 👉 Rejoins le canal officiel : https://t.me/clicpourrejointicitoites
 """)
+
+    # Envoyer la liste complète des participants au groupe
+    send_participants(GROUP_ID)
 
 # --- Voir statut ---
 def get_code_status(message):
@@ -125,6 +144,22 @@ Statut : {row[2]}
 Ligue : {row[3]}""")
     else:
         bot.send_message(message.chat.id, "❌ Code invalide !")
+
+# --- Liste des participants ---
+def send_participants(chat_id):
+    with db_lock:
+        c.execute("SELECT nom,equipe,ligue,statut FROM joueurs ORDER BY ligue,nom")
+        rows = c.fetchall()
+
+    if not rows:
+        bot.send_message(chat_id, "Aucun participant pour le moment.")
+        return
+
+    msg = "🎮 Participants au tournoi :\n\n"
+    for r in rows:
+        msg += f"Nom : {r[0]}  |  Équipe : {r[1]}  |  Ligue : {r[2]}  |  Statut : {r[3]}\n"
+
+    bot.send_message(chat_id, msg)
 
 # --- Admin ---
 @bot.message_handler(commands=['equipe'])
