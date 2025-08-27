@@ -1,4 +1,4 @@
-#  # main.py
+# main.py
 import os
 import random
 import sqlite3
@@ -16,10 +16,10 @@ DB_FILE = "tournoi.db"
 TEAMS = ["PSG","Real Madrid","Chelsea","Barça","Bayern","Man City","Man United",
          "Liverpool","Juventus","Milan AC","Inter","Arsenal","Atlético Madrid",
          "Dortmund","Napoli","Tottenham"]
-ADMIN_IDS = [6357925694]       # Ton ID Telegram
-GROUP_ID = -1001234567890      # ID du groupe Telegram
-CHANNEL_ID = -1002934569853  # ID du canal Telegram
-MAX_PLAYERS = 16               # Max joueurs par ligue
+ADMIN_IDS = [6357925694]        # Ton ID Telegram
+GROUP_ID = -1002365829730       # ID du groupe Telegram
+CHANNEL_ID = -1002934569853     # ID du canal Telegram
+MAX_PLAYERS = 16                # Max joueurs par ligue
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
@@ -34,6 +34,7 @@ c.execute("""CREATE TABLE IF NOT EXISTS joueurs (
             username TEXT,
             nom TEXT,
             equipe TEXT,
+            whatsapp TEXT,
             code TEXT,
             ligue TEXT,
             statut TEXT DEFAULT 'Qualifié'
@@ -47,9 +48,10 @@ conn.commit()
 # ====== MENU PRINCIPAL ======
 def menu_principal():
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("📝 S'inscrire", callback_data="inscription"))
+    markup.add(InlineKeyboardButton("📝 S'inscrire au tournoi", callback_data="inscription"))
     markup.add(InlineKeyboardButton("📊 Voir mon statut", callback_data="statut"))
     markup.add(InlineKeyboardButton("📋 Participants", callback_data="participants"))
+    markup.add(InlineKeyboardButton("❓ Comment fonctionne le bot", callback_data="help"))
     markup.add(InlineKeyboardButton("📢 Canal officiel", url="https://t.me/clicpourrejointicitoites"))
     return markup
 
@@ -71,11 +73,20 @@ def callback(call):
 
     elif call.data.startswith("team_"):
         _, nom, equipe, ligue_name = call.data.split("_")
-        bot.send_message(call.message.chat.id, "Ton pseudo Telegram ?")
+        bot.send_message(call.message.chat.id, "Quel est ton numéro WhatsApp (+225...) ?")
         bot.register_next_step_handler(call.message, lambda msg: save_inscription(msg, nom, equipe, ligue_name))
 
     elif call.data == "participants":
         send_participants(call.message.chat.id)
+
+    elif call.data == "help":
+        msg = ("ℹ️ Fonctionnement du bot :\n\n"
+               "1️⃣ S’inscrire au tournoi → Choisir ton équipe et entrer ton WhatsApp.\n"
+               "2️⃣ Voir mon statut → Vérifier ton code de participation et statut.\n"
+               "3️⃣ Participants → Voir la liste des participants.\n"
+               "⚠️ Un utilisateur ne peut s’inscrire qu’une seule fois par ligue.\n"
+               "Le bot envoie les inscriptions et tirages dans le groupe et le canal officiel.")
+        bot.send_message(call.message.chat.id, msg)
 
 # ====== INSCRIPTION ======
 def get_nom(message):
@@ -114,7 +125,8 @@ def get_nom(message):
     bot.send_message(message.chat.id, "Choisis ton équipe :", reply_markup=keyboard)
 
 def save_inscription(message, nom, equipe, ligue_name):
-    username = message.text
+    whatsapp = message.text
+    username = message.from_user.username or message.from_user.first_name
     with db_lock:
         # Vérifier doublon
         c.execute("SELECT * FROM joueurs WHERE telegram_id=? AND ligue=?", (message.from_user.id, ligue_name))
@@ -122,13 +134,19 @@ def save_inscription(message, nom, equipe, ligue_name):
             bot.send_message(message.chat.id, "❌ Tu es déjà inscrit dans cette ligue !")
             return
         code = str(random.randint(1000,9999))
-        c.execute("INSERT INTO joueurs (telegram_id, username, nom, equipe, code, ligue) VALUES (?,?,?,?,?,?)",
-                  (message.from_user.id, username, nom, equipe, code, ligue_name))
+        c.execute("INSERT INTO joueurs (telegram_id, username, nom, equipe, whatsapp, code, ligue) VALUES (?,?,?,?,?,?,?)",
+                  (message.from_user.id, username, nom, equipe, whatsapp, code, ligue_name))
         conn.commit()
 
-    bot.send_message(message.chat.id, f"✅ Inscription réussie !\nNom : {nom}\nÉquipe : {equipe}\nCode : {code}\nLigue : {ligue_name}")
+    # Message récapitulatif à l'utilisateur
+    msg_user = (f"✅ Inscription réussie !\n"
+                f"Nom : {nom}\nÉquipe : {equipe}\nWhatsApp : {whatsapp}\n"
+                f"Code : {code}\nLigue : {ligue_name}\n"
+                f"👉 Rejoins le canal officiel : https://t.me/clicpourrejointicitoites")
+    bot.send_message(message.chat.id, msg_user)
+
     # Envoyer message dans groupe et canal
-    msg = f"📢 Nouvelle inscription !\n@{username} - {nom} - {equipe} - {ligue_name}"
+    msg = f"📢 Nouvelle inscription !\n@{username} - {nom} - {equipe} - {whatsapp} - {ligue_name}"
     bot.send_message(GROUP_ID, msg)
     bot.send_message(CHANNEL_ID, msg)
 
@@ -200,21 +218,21 @@ def broadcast(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.send_message(message.chat.id, "⛔ Pas autorisé !")
         return
-    texte = message.text.split(" ",1)
-    if len(texte)<2:
-        bot.send_message(message.chat.id, "Usage: /broadcast ton message ici")
-        return
-    msg = texte[1]
-    with db_lock:
-        c.execute("SELECT telegram_id FROM joueurs")
-        for uid in c.fetchall():
+    try:
+        text = message.text.split(" ", 1)[1]
+        with db_lock:
+            c.execute("SELECT telegram_id FROM joueurs")
+            users = c.fetchall()
+        for u in users:
             try:
-                bot.send_message(uid[0], msg)
+                bot.send_message(u[0], f"📢 Message du bot :\n\n{text}")
             except:
-                continue
-    bot.send_message(message.chat.id, "✅ Message envoyé à tous les participants.")
+                pass
+        bot.send_message(message.chat.id, "✅ Broadcast envoyé à tous les participants.")
+    except IndexError:
+        bot.send_message(message.chat.id, "Usage: /broadcast <message>")
 
-# ====== WEBHOOK ======
+# ====== WEBHOOK FLASK ======
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     json_str = request.get_data().decode("utf-8")
@@ -222,7 +240,7 @@ def webhook():
     bot.process_new_updates([update])
     return "", 200
 
-# ====== LANCER ======
+# ====== LANCER LE BOT ======
 if __name__ == "__main__":
     bot.remove_webhook()
     PORT = int(os.environ.get("PORT", 5000))
