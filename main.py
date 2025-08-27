@@ -1,19 +1,19 @@
-from flask import Flask
-from threading import Thread
 import telebot
+import sqlite3, random, os
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import csv
-from datetime import datetime
-import json, os
+
 # --- Configuration ---
-TOKEN = os.environ.get("8377020931:AAHGv8FI4i4xJjNUuUEN3Gp2Tjwn9FG7a2c")  # Ton token Telegram
+TOKEN = os.environ.get("8377020931:AAHGv8FI4i4xJjNUuUEN3Gp2Tjwn9FG7a2c")  # Ajoute BOT_TOKEN dans Render
 DB_FILE = "tournoi.db"
 TEAMS = ["PSG","Real Madrid","Chelsea","Barça","Bayern","Man City","Man United",
          "Liverpool","Juventus","Milan AC","Inter","Arsenal","Atlético Madrid",
          "Dortmund","Napoli","Tottenham"]
-ADMIN_IDS = [6357925694]  # Remplace par ton ID Telegram
+ADMIN_IDS = [6357925694]  # Ton ID Telegram
 
-# --- SQLite ---
+# --- Initialisation ---
+bot = telebot.TeleBot(TOKEN)
+
+# --- Base SQLite ---
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 c = conn.cursor()
 c.execute("""CREATE TABLE IF NOT EXISTS joueurs (
@@ -32,178 +32,130 @@ c.execute("""CREATE TABLE IF NOT EXISTS ligues (
             )""")
 conn.commit()
 
-# --- États pour ConversationHandler ---
-NOM, EQUIPE, WHATSAPP = range(3)
+# --- Commande start ---
+@bot.message_handler(commands=['start'])
+def start(message):
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("📝 S'inscrire", callback_data="inscription"))
+    keyboard.add(InlineKeyboardButton("📊 Voir mon statut", callback_data="statut"))
+    keyboard.add(InlineKeyboardButton("📢 Canal officiel", url="https://t.me/clicpourrejointicitoites"))
+    bot.send_message(message.chat.id, "Bienvenue au tournoi eFootball !", reply_markup=keyboard)
 
-# --- Fonctions ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("📝 S'inscrire au tournoi", callback_data="inscription")],
-        [InlineKeyboardButton("📊 Voir mon statut", callback_data="statut")],
-        [InlineKeyboardButton("📢 Canal officiel", url="https://t.me/clicpourrejointicitoites")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Bienvenue au tournoi eFootball !", reply_markup=reply_markup)
-
-# --- Gestion des boutons ---
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "inscription":
-        await query.message.reply_text("Quel est ton nom d'utilisateur eFootball ?")
-        return NOM
-    elif query.data == "statut":
-        await query.message.reply_text("Entre ton code de participation :")
-        return 10  # état pour le code
-    return ConversationHandler.END
+# --- Boutons ---
+@bot.callback_query_handler(func=lambda call: True)
+def callback(call):
+    if call.data == "inscription":
+        bot.send_message(call.message.chat.id, "Quel est ton nom d’utilisateur eFootball ?")
+        bot.register_next_step_handler(call.message, get_nom)
+    elif call.data == "statut":
+        bot.send_message(call.message.chat.id, "Entre ton code de participation :")
+        bot.register_next_step_handler(call.message, get_code_status)
 
 # --- Inscription ---
-async def get_nom(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['nom'] = update.message.text
-    # Préparer les équipes disponibles
+def get_nom(message):
+    nom = message.text
+    # Vérifier équipes dispo
     c.execute("SELECT equipe FROM joueurs WHERE ligue=(SELECT COALESCE(MAX(numero),1) FROM ligues)")
     used_teams = [row[0] for row in c.fetchall()]
     available_teams = [team for team in TEAMS if team not in used_teams]
-    keyboard = [[InlineKeyboardButton(team, callback_data=team)] for team in available_teams]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Choisis ton équipe :", reply_markup=reply_markup)
-    return EQUIPE
 
-async def get_equipe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    context.user_data['equipe'] = query.data
-    await query.message.reply_text("Quel est ton numéro WhatsApp (+225...) ?")
-    return WHATSAPP
+    if not available_teams:
+        bot.send_message(message.chat.id, "Toutes les équipes sont prises, attends la prochaine ligue.")
+        return
 
-async def get_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    whatsapp = update.message.text
-    context.user_data['whatsapp'] = whatsapp
-    nom = context.user_data['nom']
-    equipe = context.user_data['equipe']
-    # Générer code unique
-    code = str(random.randint(1000,9999))
-    context.user_data['code'] = code
+    keyboard = InlineKeyboardMarkup()
+    for team in available_teams:
+        keyboard.add(InlineKeyboardButton(team, callback_data=f"team_{nom}_{team}"))
+
+    bot.send_message(message.chat.id, "Choisis ton équipe :", reply_markup=keyboard)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("team_"))
+def get_equipe(call):
+    _, nom, equipe = call.data.split("_")
+    bot.send_message(call.message.chat.id, "Quel est ton numéro WhatsApp (+225...) ?")
+    bot.register_next_step_handler(call.message, lambda msg: save_inscription(msg, nom, equipe))
+
+def save_inscription(message, nom, equipe):
+    whatsapp = message.text
+    code = str(random.randint(1000, 9999))
+
     # Déterminer la ligue
     c.execute("SELECT MAX(numero) FROM ligues")
     row = c.fetchone()
-    if row[0] is None or c.execute("SELECT COUNT(*) FROM joueurs WHERE ligue=?", (row[0],)).fetchone()[0]>=16:
-        ligue_num = 1 if row[0] is None else row[0]+1
-        c.execute("INSERT INTO ligues (numero) VALUES (?)",(ligue_num,))
+    if row[0] is None or c.execute("SELECT COUNT(*) FROM joueurs WHERE ligue=?", (row[0],)).fetchone()[0] >= 16:
+        ligue_num = 1 if row[0] is None else row[0] + 1
+        c.execute("INSERT INTO ligues (numero) VALUES (?)", (ligue_num,))
         conn.commit()
     else:
         ligue_num = row[0]
-    # Insérer joueur
+
+    # Sauvegarde joueur
     c.execute("INSERT INTO joueurs (telegram_id, nom, equipe, whatsapp, code, ligue) VALUES (?,?,?,?,?,?)",
-              (update.message.from_user.id, nom, equipe, whatsapp, code, ligue_num))
+              (message.from_user.id, nom, equipe, whatsapp, code, ligue_num))
     conn.commit()
-    await update.message.reply_text(f"""✅ Inscription réussie !
 
-Nom d’utilisateur : {nom}
-Ton équipe : {equipe}
-Numéro WhatsApp : {whatsapp}
-Code de participation : {code}
+    bot.send_message(message.chat.id, f"""✅ Inscription réussie !
 
-👉 Rejoins le canal officiel : TON_LIEN_TELEGRAM""")
-    # Envoyer recap dans canal (ici le chat actuel, tu peux mettre un canal)
-    participants = c.execute("SELECT nom,equipe FROM joueurs WHERE ligue=?", (ligue_num,)).fetchall()
-    msg = "📋 Liste des participants au tournoi eFootball Mobile\n\nNom d’utilisateur        Équipe\n"
-    for i,row in enumerate(participants,1):
-        msg += f"{i}. {row[0]}           {row[1]}\n"
-    await update.message.reply_text(msg)
-    return ConversationHandler.END
+Nom : {nom}
+Équipe : {equipe}
+WhatsApp : {whatsapp}
+Code participation : {code}
+
+👉 Rejoins le canal officiel : https://t.me/clicpourrejointicitoites
+""")
 
 # --- Voir statut ---
-async def get_code_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    code = update.message.text
-    c.execute("SELECT nom,equipe,statut,ligue FROM joueurs WHERE code=?",(code,))
+def get_code_status(message):
+    code = message.text
+    c.execute("SELECT nom,equipe,statut,ligue FROM joueurs WHERE code=?", (code,))
     row = c.fetchone()
     if row:
-        await update.message.reply_text(f"""Nom d’utilisateur : {row[0]}
+        bot.send_message(message.chat.id, f"""Nom : {row[0]}
 Équipe : {row[1]}
 Statut : {row[2]}
 Ligue : {row[3]}""")
     else:
-        await update.message.reply_text("Code invalide !")
-    return ConversationHandler.END
+        bot.send_message(message.chat.id, "❌ Code invalide !")
 
-# --- Commande admin pour éliminer/qualifier ---
-async def set_statut(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in ADMIN_IDS:
-        await update.message.reply_text("Tu n'es pas autorisé !")
+# --- Admin : changer statut ---
+@bot.message_handler(commands=['equipe'])
+def set_statut(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.send_message(message.chat.id, "⛔ Tu n’es pas autorisé !")
         return
     try:
-        args = context.args
-        nom = args[0]
-        statut = args[1]
-        if statut not in ["Éliminé","Qualifié"]:
-            await update.message.reply_text("Statut invalide, utiliser Éliminé ou Qualifié")
+        args = message.text.split()
+        nom = args[1]
+        statut = args[2]
+        if statut not in ["Éliminé", "Qualifié"]:
+            bot.send_message(message.chat.id, "⚠️ Statut invalide (Éliminé ou Qualifié).")
             return
-        c.execute("UPDATE joueurs SET statut=? WHERE nom=?",(statut,nom))
+        c.execute("UPDATE joueurs SET statut=? WHERE nom=?", (statut, nom))
         conn.commit()
-        await update.message.reply_text(f"{nom} est maintenant {statut}")
+        bot.send_message(message.chat.id, f"{nom} est maintenant {statut}")
     except:
-        await update.message.reply_text("Usage: /equipe <nom> <Éliminé/Qualifié>")
+        bot.send_message(message.chat.id, "Usage: /equipe <nom> <Éliminé/Qualifié>")
 
-# --- Commande admin pour tirer matchs ---
-async def tirer_matchs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in ADMIN_IDS:
-        await update.message.reply_text("Tu n'es pas autorisé !")
+# --- Admin : tirer les matchs ---
+@bot.message_handler(commands=['ligue'])
+def tirer_matchs(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.send_message(message.chat.id, "⛔ Tu n’es pas autorisé !")
         return
     try:
-        ligue_num = int(context.args[0])
-        participants = c.execute("SELECT nom,equipe FROM joueurs WHERE ligue=? AND statut='Qualifié'",(ligue_num,)).fetchall()
+        ligue_num = int(message.text.split()[1])
+        participants = c.execute("SELECT nom,equipe FROM joueurs WHERE ligue=? AND statut='Qualifié'", (ligue_num,)).fetchall()
         random.shuffle(participants)
-        msg = f"🎮 Ligue {ligue_num} - Phase éliminatoire\n\nMatchs :\n"
-        for i in range(0,len(participants),2):
-            if i+1<len(participants):
+        msg = f"🎮 Ligue {ligue_num} - Matchs\n\n"
+        for i in range(0, len(participants), 2):
+            if i + 1 < len(participants):
                 msg += f"{participants[i][0]} ({participants[i][1]}) vs {participants[i+1][0]} ({participants[i+1][1]})\n"
             else:
                 msg += f"{participants[i][0]} ({participants[i][1]}) reçoit un bye\n"
-        await update.message.reply_text(msg)
+        bot.send_message(message.chat.id, msg)
     except:
-        await update.message.reply_text("Usage: /ligue <numero>")
+        bot.send_message(message.chat.id, "Usage: /ligue <numero>")
 
-# --- Rappels participants (simulé) ---
-async def rappel_participants(context: ContextTypes.DEFAULT_TYPE):
-    c.execute("SELECT telegram_id, nom, equipe FROM joueurs WHERE statut='Qualifié'")
-    for row in c.fetchall():
-        chat_id = row[0]
-        await context.bot.send_message(chat_id=chat_id, text=f"🔔 Rappel : Ton prochain match approche !\nJoueur : {row[1]}\nÉquipe : {row[2]}")
-
-# --- Option remplaçant ---
-def choisir_remplacant(ligue_num):
-    # retourne le premier joueur disponible non dans la phase actuelle
-    c.execute("SELECT nom,equipe FROM joueurs WHERE ligue=? AND statut='Qualifié'",(ligue_num,))
-    participants = c.fetchall()
-    if participants:
-        return participants[0]  # simple remplacement
-    return None
-
-# --- Conversation Handler ---
-conv_handler = ConversationHandler(
-    entry_points=[CallbackQueryHandler(button)],
-    states={
-        NOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_nom)],
-        EQUIPE: [CallbackQueryHandler(get_equipe)],
-        WHATSAPP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_whatsapp)],
-        10: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code_status)]
-    },
-    fallbacks=[]
-)
-
-# --- Application ---
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("equipe", set_statut))
-app.add_handler(CommandHandler("ligue", tirer_matchs))
-app.add_handler(conv_handler)
-
-def run_bot():
-    bot.polling(none_stop=True)
-
-Thread(target=run_bot, daemon=True).start()
-
+# --- Lancer bot ---
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    bot.polling(none_stop=True)       
