@@ -2,8 +2,9 @@
 import os
 import random
 import sqlite3
-import telebot
+from threading import Lock
 from flask import Flask, request
+import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- Configuration ---
@@ -19,6 +20,7 @@ ADMIN_IDS = [6357925694]  # Ton ID Telegram
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
+db_lock = Lock()
 
 # --- Base SQLite ---
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -48,21 +50,28 @@ def start(message):
     keyboard.add(InlineKeyboardButton("📢 Canal officiel", url="https://t.me/clicpourrejointicitoites"))
     bot.send_message(message.chat.id, "Bienvenue au tournoi eFootball !", reply_markup=keyboard)
 
-# --- Callback boutons ---
+# --- Callback buttons fusionné ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
     if call.data == "inscription":
         bot.send_message(call.message.chat.id, "Quel est ton nom d’utilisateur eFootball ?")
         bot.register_next_step_handler(call.message, get_nom)
+
     elif call.data == "statut":
         bot.send_message(call.message.chat.id, "Entre ton code de participation :")
         bot.register_next_step_handler(call.message, get_code_status)
 
+    elif call.data.startswith("team_"):
+        _, nom, equipe = call.data.split("_")
+        bot.send_message(call.message.chat.id, "Quel est ton numéro WhatsApp (+225...) ?")
+        bot.register_next_step_handler(call.message, lambda msg: save_inscription(msg, nom, equipe))
+
 # --- Inscription ---
 def get_nom(message):
     nom = message.text
-    c.execute("SELECT equipe FROM joueurs WHERE ligue=(SELECT COALESCE(MAX(numero),1) FROM ligues)")
-    used_teams = [row[0] for row in c.fetchall()]
+    with db_lock:
+        c.execute("SELECT equipe FROM joueurs WHERE ligue=(SELECT COALESCE(MAX(numero),1) FROM ligues)")
+        used_teams = [row[0] for row in c.fetchall()]
     available_teams = [team for team in TEAMS if team not in used_teams]
 
     if not available_teams:
@@ -75,28 +84,23 @@ def get_nom(message):
 
     bot.send_message(message.chat.id, "Choisis ton équipe :", reply_markup=keyboard)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("team_"))
-def get_equipe(call):
-    _, nom, equipe = call.data.split("_")
-    bot.send_message(call.message.chat.id, "Quel est ton numéro WhatsApp (+225...) ?")
-    bot.register_next_step_handler(call.message, lambda msg: save_inscription(msg, nom, equipe))
-
 def save_inscription(message, nom, equipe):
     whatsapp = message.text
     code = str(random.randint(1000, 9999))
 
-    c.execute("SELECT MAX(numero) FROM ligues")
-    row = c.fetchone()
-    if row[0] is None or c.execute("SELECT COUNT(*) FROM joueurs WHERE ligue=?", (row[0],)).fetchone()[0] >= 16:
-        ligue_num = 1 if row[0] is None else row[0] + 1
-        c.execute("INSERT INTO ligues (numero) VALUES (?)", (ligue_num,))
-        conn.commit()
-    else:
-        ligue_num = row[0]
+    with db_lock:
+        c.execute("SELECT MAX(numero) FROM ligues")
+        row = c.fetchone()
+        if row[0] is None or c.execute("SELECT COUNT(*) FROM joueurs WHERE ligue=?", (row[0],)).fetchone()[0] >= 16:
+            ligue_num = 1 if row[0] is None else row[0] + 1
+            c.execute("INSERT INTO ligues (numero) VALUES (?)", (ligue_num,))
+            conn.commit()
+        else:
+            ligue_num = row[0]
 
-    c.execute("INSERT INTO joueurs (telegram_id, nom, equipe, whatsapp, code, ligue) VALUES (?,?,?,?,?,?)",
-              (message.from_user.id, nom, equipe, whatsapp, code, ligue_num))
-    conn.commit()
+        c.execute("INSERT INTO joueurs (telegram_id, nom, equipe, whatsapp, code, ligue) VALUES (?,?,?,?,?,?)",
+                  (message.from_user.id, nom, equipe, whatsapp, code, ligue_num))
+        conn.commit()
 
     bot.send_message(message.chat.id, f"""✅ Inscription réussie !
 
@@ -111,8 +115,9 @@ Code participation : {code}
 # --- Voir statut ---
 def get_code_status(message):
     code = message.text
-    c.execute("SELECT nom,equipe,statut,ligue FROM joueurs WHERE code=?", (code,))
-    row = c.fetchone()
+    with db_lock:
+        c.execute("SELECT nom,equipe,statut,ligue FROM joueurs WHERE code=?", (code,))
+        row = c.fetchone()
     if row:
         bot.send_message(message.chat.id, f"""Nom : {row[0]}
 Équipe : {row[1]}
@@ -134,8 +139,9 @@ def set_statut(message):
         if statut not in ["Éliminé", "Qualifié"]:
             bot.send_message(message.chat.id, "⚠️ Statut invalide (Éliminé ou Qualifié).")
             return
-        c.execute("UPDATE joueurs SET statut=? WHERE nom=?", (statut, nom))
-        conn.commit()
+        with db_lock:
+            c.execute("UPDATE joueurs SET statut=? WHERE nom=?", (statut, nom))
+            conn.commit()
         bot.send_message(message.chat.id, f"{nom} est maintenant {statut}")
     except:
         bot.send_message(message.chat.id, "Usage: /equipe <nom> <Éliminé/Qualifié>")
@@ -147,7 +153,8 @@ def tirer_matchs(message):
         return
     try:
         ligue_num = int(message.text.split()[1])
-        participants = c.execute("SELECT nom,equipe FROM joueurs WHERE ligue=? AND statut='Qualifié'", (ligue_num,)).fetchall()
+        with db_lock:
+            participants = c.execute("SELECT nom,equipe FROM joueurs WHERE ligue=? AND statut='Qualifié'", (ligue_num,)).fetchall()
         random.shuffle(participants)
         msg = f"🎮 Ligue {ligue_num} - Matchs\n\n"
         for i in range(0, len(participants), 2):
