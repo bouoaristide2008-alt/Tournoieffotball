@@ -1,4 +1,10 @@
-   
+   from flask import Flask
+from threading import Thread
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import csv
+from datetime import datetime
+import json, os
 # --- Configuration ---
 TOKEN = os.environ.get("8377020931:AAHGv8FI4i4xJjNUuUEN3Gp2Tjwn9FG7a2c")  # Ton token Telegram
 DB_FILE = "tournoi.db"
