@@ -3,7 +3,7 @@ import sqlite3, random, os
 from flask import Flask, request
 
 # --- Configuration ---
-TOKEN = os.environ.get("8377020931:AAHGv8FI4i4xJjNUuUEN3Gp2Tjwn9FG7a2c")  # Token depuis variable d'environnement Render
+TOKEN = os.environ.get("BOT_TOKEN")  # Token depuis variable d'environnement Render
 URL = os.environ.get("WEBHOOK_URL")  # L'URL publique de ton Render Web Service
 DB_FILE = "tournoi.db"
 TEAMS = ["PSG","Real Madrid","Chelsea","Barça","Bayern","Man City","Man United",
