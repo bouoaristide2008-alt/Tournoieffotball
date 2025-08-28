@@ -52,7 +52,7 @@ def menu_principal():
     markup.add(InlineKeyboardButton("📊 Voir mon statut", callback_data="statut"))
     markup.add(InlineKeyboardButton("📋 Participants", callback_data="participants"))
     markup.add(InlineKeyboardButton("❓ Comment fonctionne le bot", callback_data="help"))
-    markup.add(InlineKeyboardButton("📢 rejoint le Canal officiel "))
+    markup.add(InlineKeyboardButton("📢 rejoint le Canal officiel", url=https://t.me/ytabdNbZ0qJlZWU0))
     return markup
 
 # ====== START ======
