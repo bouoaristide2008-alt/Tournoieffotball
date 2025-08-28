@@ -17,8 +17,8 @@ TEAMS = ["PSG","Real Madrid","Chelsea","Barça","Bayern","Man City","Man United"
          "Liverpool","Juventus","Milan AC","Inter","Arsenal","Atlético Madrid",
          "Dortmund","Napoli","Tottenham"]
 ADMIN_IDS = [6357925694]        # Ton ID Telegram
-GROUP_ID = -1002365829730       # ID du groupe Telegram
-CHANNEL_ID = -1002934569853     # ID du canal Telegram
+GROUP_ID = -1001234567890       # ID du groupe Telegram
+CHANNEL_ID = -1009876543210     # ID du canal Telegram
 MAX_PLAYERS = 16                # Max joueurs par ligue
 
 bot = telebot.TeleBot(TOKEN)
@@ -52,7 +52,7 @@ def menu_principal():
     markup.add(InlineKeyboardButton("📊 Voir mon statut", callback_data="statut"))
     markup.add(InlineKeyboardButton("📋 Participants", callback_data="participants"))
     markup.add(InlineKeyboardButton("❓ Comment fonctionne le bot", callback_data="help"))
-    markup.add(InlineKeyboardButton("📢 rejoint le Canal officiel", url=https://t.me/ytabdNbZ0qJlZWU0))
+    markup.add(InlineKeyboardButton("📢 Canal officiel", url="https://t.me/ytabdNbZ0qJlZWU0"))
     return markup
 
 # ====== START ======
