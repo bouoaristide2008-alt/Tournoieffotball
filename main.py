@@ -1,4 +1,3 @@
-# main.py
 import os
 import random
 import sqlite3
@@ -12,14 +11,11 @@ TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("Le token Telegram n'est pas défini !")
 
-DB_FILE = "tournoi.db"
-TEAMS = ["PSG","Real Madrid","Chelsea","Barça","Bayern","Man City","Man United",
-         "Liverpool","Juventus","Milan AC","Inter","Arsenal","Atlético Madrid",
-         "Dortmund","Napoli","Tottenham"]
+DB_FILE = "cashback.db"
 ADMIN_IDS = [6357925694]        # Ton ID Telegram
-GROUP_ID = -1001234567890       # ID du groupe Telegram
-CHANNEL_ID = -1009876543210     # ID du canal Telegram
-MAX_PLAYERS = 16                # Max joueurs par ligue
+CHANNEL_URL = "https://t.me/kingpronosbs"  # Ton canal
+GROUP_URL = "https://t.me/htclicpourrejointicitoites"      # Ton groupe
+SITE_URL = "https://reffpa.com/L?tag=d_3684565m_97c_&site=3684565&ad=97&r=bienvenuaridtlrbj"
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
@@ -28,209 +24,151 @@ db_lock = Lock()
 # ====== BASE DE DONNÉES ======
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 c = conn.cursor()
-c.execute("""CREATE TABLE IF NOT EXISTS joueurs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            telegram_id INTEGER,
-            username TEXT,
-            nom TEXT,
-            equipe TEXT,
-            whatsapp TEXT,
-            code TEXT,
-            ligue TEXT,
-            statut TEXT DEFAULT 'Qualifié'
-            )""")
-c.execute("""CREATE TABLE IF NOT EXISTS ligues (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            numero INTEGER
-            )""")
+c.execute("""
+CREATE TABLE IF NOT EXISTS demandes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    bookmaker TEXT,
+    bookmaker_id TEXT,
+    statut TEXT DEFAULT 'En attente',
+    code_cashback TEXT,
+    montant INTEGER DEFAULT 0
+)
+""")
 conn.commit()
 
-# ====== MENU PRINCIPAL ======
+# ====== MENUS ======
 def menu_principal():
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("📝 S'inscrire au tournoi", callback_data="inscription"))
-    markup.add(InlineKeyboardButton("📊 Voir mon statut", callback_data="statut"))
-    markup.add(InlineKeyboardButton("📋 Participants", callback_data="participants"))
-    markup.add(InlineKeyboardButton("❓ Comment fonctionne le bot", callback_data="help"))
-    markup.add(InlineKeyboardButton("📢 Canal officiel", url="https://t.me/ytabdNbZ0qJlZWU0"))
+    markup.add(InlineKeyboardButton("💰 Cashback", callback_data="cashback"))
+    markup.add(InlineKeyboardButton("📢 Rejoindre canal", url=CHANNEL_URL))
+    markup.add(InlineKeyboardButton("🌐 Visiter le site", url=SITE_URL))
+    markup.add(InlineKeyboardButton("🆘 Support", callback_data="support"))
+    markup.add(InlineKeyboardButton("❓ Aide", callback_data="aide"))
+    markup.add(InlineKeyboardButton("👥 Rejoindre le groupe", url=GROUP_URL))
+    return markup
+
+def bookmaker_buttons():
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("1️⃣ 1xBet", callback_data="bookmaker_1xbet"),
+        InlineKeyboardButton("2️⃣ Melbet", callback_data="bookmaker_melbet"),
+        InlineKeyboardButton("3️⃣ BetWinner", callback_data="bookmaker_betwinner")
+    )
     return markup
 
 # ====== START ======
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "Bienvenue au tournoi eFootball !", reply_markup=menu_principal())
+    bot.send_message(
+        message.chat.id,
+        "👋 Bienvenue sur le bot Cashback !\n\nQuel bookmaker utilisez-vous ?",
+        reply_markup=bookmaker_buttons()
+    )
 
-# ====== CALLBACK ======
+# ====== CALLBACK HANDLER ======
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
-    if call.data == "inscription":
-        bot.send_message(call.message.chat.id, "Quel est ton nom d’utilisateur eFootball ?")
-        bot.register_next_step_handler(call.message, get_nom)
+    if call.data.startswith("bookmaker_"):
+        bookmaker = call.data.split("_")[1]
+        bot.send_message(call.message.chat.id, f"📌 Entrez votre ID {bookmaker} :")
+        bot.register_next_step_handler(call.message, save_demande, call.from_user.id, bookmaker)
 
-    elif call.data == "statut":
-        bot.send_message(call.message.chat.id, "Entre ton code de participation :")
-        bot.register_next_step_handler(call.message, get_code_status)
+    elif call.data == "cashback":
+        show_cashback(call.message)
 
-    elif call.data.startswith("team_"):
-        _, nom, equipe, ligue_name = call.data.split("_")
-        bot.send_message(call.message.chat.id, "Quel est ton numéro WhatsApp (+225...) ?")
-        bot.register_next_step_handler(call.message, lambda msg: save_inscription(msg, nom, equipe, ligue_name))
+    elif call.data == "support":
+        bot.send_message(call.message.chat.id, f"🆘 Contacte l'admin en PV : @{bot.get_me().username}")
 
-    elif call.data == "participants":
-        send_participants(call.message.chat.id)
+    elif call.data == "aide":
+        bot.send_message(call.message.chat.id,
+                         "❓ Pour réclamer votre cashback :\n"
+                         "1. Choisissez votre bookmaker\n"
+                         "2. Saisissez votre ID\n"
+                         "3. Attendez l'acceptation de l'admin\n"
+                         "4. Recevez votre code cashback")
 
-    elif call.data == "help":
-        msg = ("ℹ️ Fonctionnement du bot :\n\n"
-               "1️⃣ S’inscrire au tournoi → Choisir ton équipe et entrer ton WhatsApp.\n"
-               "2️⃣ Voir mon statut → Vérifier ton code de participation et statut.\n"
-               "3️⃣ Participants → Voir la liste des participants.\n"
-               "⚠️ Un utilisateur ne peut s’inscrire qu’une seule fois par ligue.\n"
-               "Le bot envoie les inscriptions et tirages dans le groupe et le canal officiel.")
-        bot.send_message(call.message.chat.id, msg)
-
-# ====== INSCRIPTION ======
-def get_nom(message):
-    nom = message.text
-    with db_lock:
-        # Déterminer la ligue actuelle
-        c.execute("SELECT numero FROM ligues ORDER BY numero DESC LIMIT 1")
-        row = c.fetchone()
-        if not row:
-            ligue_num = 1
-            c.execute("INSERT INTO ligues (numero) VALUES (?)", (ligue_num,))
-            conn.commit()
-        else:
-            c.execute("SELECT COUNT(*) FROM joueurs WHERE ligue=?", (f"L{row[0]}",))
-            count = c.fetchone()[0]
-            if count >= MAX_PLAYERS:
-                ligue_num = row[0] + 1
-                c.execute("INSERT INTO ligues (numero) VALUES (?)", (ligue_num,))
-                conn.commit()
-            else:
-                ligue_num = row[0]
-        ligue_name = f"L{ligue_num}"
-
-        # Vérifier équipes disponibles
-        c.execute("SELECT equipe FROM joueurs WHERE ligue=?", (ligue_name,))
-        used_teams = [r[0] for r in c.fetchall()]
-    available_teams = [team for team in TEAMS if team not in used_teams]
-    if not available_teams:
-        bot.send_message(message.chat.id, "Toutes les équipes sont prises pour cette ligue !")
+# ====== SAVE DEMANDE ======
+def save_demande(message, user_id, bookmaker):
+    if message.from_user.id != user_id:
         return
-
-    keyboard = InlineKeyboardMarkup()
-    for team in available_teams:
-        keyboard.add(InlineKeyboardButton(team, callback_data=f"team_{nom}_{team}_{ligue_name}"))
-
-    bot.send_message(message.chat.id, "Choisis ton équipe :", reply_markup=keyboard)
-
-def save_inscription(message, nom, equipe, ligue_name):
-    whatsapp = message.text
+    bookmaker_id = message.text.strip()
     username = message.from_user.username or message.from_user.first_name
+
     with db_lock:
-        # Vérifier doublon
-        c.execute("SELECT * FROM joueurs WHERE telegram_id=? AND ligue=?", (message.from_user.id, ligue_name))
-        if c.fetchone():
-            bot.send_message(message.chat.id, "❌ Tu es déjà inscrit dans cette ligue !")
-            return
-        code = str(random.randint(1000,9999))
-        c.execute("INSERT INTO joueurs (telegram_id, username, nom, equipe, whatsapp, code, ligue) VALUES (?,?,?,?,?,?,?)",
-                  (message.from_user.id, username, nom, equipe, whatsapp, code, ligue_name))
+        c.execute("INSERT INTO demandes (user_id, username, bookmaker, bookmaker_id) VALUES (?,?,?,?)",
+                  (user_id, username, bookmaker, bookmaker_id))
+        demande_id = c.lastrowid
         conn.commit()
 
-    # Message récapitulatif à l'utilisateur
-    msg_user = (f"✅ Inscription réussie !\n"
-                f"Nom : {nom}\nÉquipe : {equipe}\nWhatsApp : {whatsapp}\n"
-                f"Code : {code}\nLigue : {ligue_name}\n"
-                f"👉 Rejoins le canal officiel : https://t.me/ytabdNbZ0qJlZWU0")
-    bot.send_message(message.chat.id, msg_user)
+    bot.send_message(message.chat.id, "✅ Votre demande a été enregistrée. Veuillez patienter que l'admin la valide.")
 
-    # Envoyer message dans groupe et canal
-    msg = f"📢 Nouvelle inscription !\n@{username} - {nom} - {equipe} - {whatsapp} - {ligue_name}"
-    bot.send_message(GROUP_ID, msg)
-    bot.send_message(CHANNEL_ID, msg)
+    # Notification admin
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("✅ Accepter", callback_data=f"accepter_{demande_id}"),
+        InlineKeyboardButton("❌ Rejeter", callback_data=f"rejeter_{demande_id}")
+    )
+    bot.send_message(
+        ADMIN_IDS[0],
+        f"📢 Nouvelle demande\nNom : {username}\nBookmaker : {bookmaker}\nID : {bookmaker_id}\nStatut : En attente\nLien groupe : {GROUP_URL}",
+        reply_markup=markup
+    )
 
-    # Tirage si 16 joueurs
+# ====== SHOW CASHBACK ======
+def show_cashback(message):
     with db_lock:
-        c.execute("SELECT * FROM joueurs WHERE ligue=?", (ligue_name,))
-        joueurs = c.fetchall()
-    if len(joueurs) == MAX_PLAYERS:
-        tirage_ligue(ligue_name, joueurs)
-
-# ====== TIRAGE ======
-def tirage_ligue(ligue_name, joueurs):
-    random.shuffle(joueurs)
-    msg = f"🎮 Tirage {ligue_name} - Matchs\n\n"
-    for i in range(0, len(joueurs), 2):
-        if i+1 < len(joueurs):
-            msg += f"@{joueurs[i][2]} ({joueurs[i][4]}) vs @{joueurs[i+1][2]} ({joueurs[i+1][4]})\n"
-        else:
-            msg += f"@{joueurs[i][2]} ({joueurs[i][4]}) reçoit un bye\n"
-    bot.send_message(GROUP_ID, msg)
-    bot.send_message(CHANNEL_ID, msg)
-
-# ====== STATUT ======
-def get_code_status(message):
-    code = message.text
-    with db_lock:
-        c.execute("SELECT nom,equipe,statut,ligue FROM joueurs WHERE code=?", (code,))
-        row = c.fetchone()
-    if row:
-        bot.send_message(message.chat.id, f"Nom : {row[0]}\nÉquipe : {row[1]}\nStatut : {row[2]}\nLigue : {row[3]}")
-    else:
-        bot.send_message(message.chat.id, "❌ Code invalide !")
-
-# ====== PARTICIPANTS ======
-def send_participants(chat_id):
-    with db_lock:
-        c.execute("SELECT nom,equipe,ligue,statut,username FROM joueurs ORDER BY ligue,nom")
+        c.execute("SELECT montant FROM demandes WHERE user_id=? AND statut='Acceptée'", (message.from_user.id,))
         rows = c.fetchall()
     if not rows:
-        bot.send_message(chat_id, "Aucun participant pour le moment.")
-        return
-    msg = "🎮 Participants au tournoi :\n\n"
-    for r in rows:
-        msg += f"Nom : {r[0]} | Équipe : {r[1]} | Ligue : {r[2]} | Statut : {r[3]} | Telegram : @{r[4]}\n"
-    bot.send_message(chat_id, msg)
+        bot.send_message(message.chat.id, "💰 Vous n'avez aucun cashback disponible.")
+    else:
+        total = sum([r[0] for r in rows])
+        bot.send_message(message.chat.id, f"💰 Votre cashback total : {total} CFA")
 
-# ====== ADMIN ======
-@bot.message_handler(commands=['equipe'])
-def set_statut(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.send_message(message.chat.id, "⛔ Tu n’es pas autorisé !")
+# ====== ADMIN ACCEPT/REJECT ======
+@bot.callback_query_handler(func=lambda call: call.data.startswith("accepter_") or call.data.startswith("rejeter_"))
+def admin_accept_reject(call):
+    if call.from_user.id not in ADMIN_IDS:
         return
-    try:
-        args = message.text.split()
-        nom = args[1]
-        statut = args[2]
-        if statut not in ["Éliminé", "Qualifié"]:
-            bot.send_message(message.chat.id, "⚠️ Statut invalide (Éliminé ou Qualifié).")
-            return
+
+    demande_id = int(call.data.split("_")[1])
+    if call.data.startswith("accepter_"):
+        code_cash = ''.join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=8))
         with db_lock:
-            c.execute("UPDATE joueurs SET statut=? WHERE nom=?", (statut, nom))
+            c.execute("UPDATE demandes SET statut='Acceptée', code_cashback=? WHERE id=?", (code_cash, demande_id))
             conn.commit()
-        bot.send_message(message.chat.id, f"{nom} est maintenant {statut}")
-    except:
-        bot.send_message(message.chat.id, "Usage: /equipe <nom> <Éliminé/Qualifié>")
+            c.execute("SELECT user_id, username FROM demandes WHERE id=?", (demande_id,))
+            row = c.fetchone()
+        if row:
+            user_id, username = row
+            bot.send_message(user_id, f"✅ Votre demande a été acceptée !\nVotre code cashback : {code_cash}")
+        bot.edit_message_text("✅ Demande acceptée", call.message.chat.id, call.message.message_id)
+    else:
+        with db_lock:
+            c.execute("UPDATE demandes SET statut='Rejetée' WHERE id=?", (demande_id,))
+            conn.commit()
+            c.execute("SELECT user_id FROM demandes WHERE id=?", (demande_id,))
+            row = c.fetchone()
+        if row:
+            bot.send_message(row[0], "❌ Votre demande a été rejetée.")
+        bot.edit_message_text("❌ Demande rejetée", call.message.chat.id, call.message.message_id)
 
-@bot.message_handler(commands=['broadcast'])
-def broadcast(message):
+# ====== ADMIN AJOUT MONTANT ======
+@bot.message_handler(commands=['ajouter_montant'])
+def add_montant(message):
     if message.from_user.id not in ADMIN_IDS:
-        bot.send_message(message.chat.id, "⛔ Pas autorisé !")
         return
     try:
-        text = message.text.split(" ", 1)[1]
+        _, demande_id, montant = message.text.split()
+        demande_id, montant = int(demande_id), int(montant)
         with db_lock:
-            c.execute("SELECT telegram_id FROM joueurs")
-            users = c.fetchall()
-        for u in users:
-            try:
-                bot.send_message(u[0], f"📢 Message du bot :\n\n{text}")
-            except:
-                pass
-        bot.send_message(message.chat.id, "✅ Broadcast envoyé à tous les participants.")
-    except IndexError:
-        bot.send_message(message.chat.id, "Usage: /broadcast <message>")
+            c.execute("UPDATE demandes SET montant=? WHERE id=?", (montant, demande_id))
+            conn.commit()
+        bot.send_message(message.chat.id, f"✅ Montant {montant} CFA ajouté à la demande {demande_id}.")
+    except:
+        bot.send_message(message.chat.id, "Usage: /ajouter_montant <id_demande> <montant>")
 
 # ====== WEBHOOK FLASK ======
 @app.route(f"/{TOKEN}", methods=["POST"])
@@ -239,6 +177,11 @@ def webhook():
     update = telebot.types.Update.de_json(json_str)
     bot.process_new_updates([update])
     return "", 200
+
+# ====== PAGE TEST ======
+@app.route("/", methods=["GET"])
+def index():
+    return "✅ Bot Cashback est en ligne !", 200
 
 # ====== LANCER LE BOT ======
 if __name__ == "__main__":
